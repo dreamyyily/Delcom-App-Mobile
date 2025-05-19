@@ -16,6 +16,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -43,9 +44,11 @@ fun PostsScreen(
     var showAddPostDialog by remember { mutableStateOf(false) }
     var showEditPostDialog by remember { mutableStateOf(false) }
     var showPostDetailDialog by remember { mutableStateOf(false) }
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
     var selectedPost by remember { mutableStateOf<Post?>(null) }
     var detailedPost by remember { mutableStateOf<DetailedPost?>(null) }
     var editingPost by remember { mutableStateOf<Post?>(null) }
+    var postToDelete by remember { mutableStateOf<Post?>(null) }
     var newPostContent by remember { mutableStateOf("") }
     var editPostContent by remember { mutableStateOf("") }
     var selectedCoverUri by remember { mutableStateOf<Uri?>(null) }
@@ -174,19 +177,33 @@ fun PostsScreen(
                                         style = MaterialTheme.typography.labelSmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
-                                    IconButton(
-                                        onClick = {
-                                            editingPost = post
-                                            editPostContent = post.description
-                                            selectedEditCoverUri = null
-                                            showEditPostDialog = true
+                                    Row {
+                                        IconButton(
+                                            onClick = {
+                                                editingPost = post
+                                                editPostContent = post.description
+                                                selectedEditCoverUri = null
+                                                showEditPostDialog = true
+                                            }
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Edit,
+                                                contentDescription = "Edit Postingan",
+                                                tint = MaterialTheme.colorScheme.primary
+                                            )
                                         }
-                                    ) {
-                                        Icon(
-                                            Icons.Default.Edit,
-                                            contentDescription = "Edit Postingan",
-                                            tint = MaterialTheme.colorScheme.primary
-                                        )
+                                        IconButton(
+                                            onClick = {
+                                                postToDelete = post
+                                                showDeleteConfirmDialog = true
+                                            }
+                                        ) {
+                                            Icon(
+                                                Icons.Default.Delete,
+                                                contentDescription = "Hapus Postingan",
+                                                tint = Color.Red
+                                            )
+                                        }
                                     }
                                 }
                                 if (post.cover != null) {
@@ -587,6 +604,61 @@ fun PostsScreen(
                     }
                 ) {
                     Text("Tutup")
+                }
+            },
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    }
+
+    // Delete Confirmation Dialog
+    if (showDeleteConfirmDialog && postToDelete != null) {
+        AlertDialog(
+            onDismissRequest = {
+                showDeleteConfirmDialog = false
+                postToDelete = null
+            },
+            title = { Text("Konfirmasi Hapus") },
+            text = { Text("Apakah Anda yakin ingin menghapus Postingan #${postToDelete?.id}?") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val postId = postToDelete?.id ?: return@Button
+                        viewModel.deletePost(
+                            postId = postId,
+                            onSuccess = {
+                                showDeleteConfirmDialog = false
+                                postToDelete = null
+                            },
+                            onFailure = { error ->
+                                Toast.makeText(context, error, Toast.LENGTH_LONG).show()
+                            }
+                        )
+                    },
+                    enabled = !isUploading,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Color.Red,
+                        contentColor = Color.White
+                    ),
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    if (isUploading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(20.dp),
+                            color = Color.White
+                        )
+                    } else {
+                        Text("Hapus")
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        showDeleteConfirmDialog = false
+                        postToDelete = null
+                    }
+                ) {
+                    Text("Batal")
                 }
             },
             containerColor = MaterialTheme.colorScheme.surface

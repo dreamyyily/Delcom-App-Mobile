@@ -141,6 +141,51 @@ class ProfileViewModel(private val context: Context) : ViewModel() {
         })
     }
 
+    fun deletePost(postId: Int, onSuccess: (String) -> Unit, onFailure: (String) -> Unit) {
+        if (ApiClient.authToken.isNullOrEmpty()) {
+            onFailure("Authentication required. Please log in again.")
+            Log.e("ProfileViewModel", "No auth token available")
+            return
+        }
+
+        if (!isNetworkAvailable()) {
+            onFailure("No internet connection. Please check your network.")
+            Log.e("ProfileViewModel", "No internet connection")
+            return
+        }
+
+        isLoading.value = true
+        Log.d("ProfileViewModel", "Deleting post: id=$postId")
+        ApiClient.postApi.deletePost(postId).enqueue(object : Callback<PostResponse> {
+            override fun onResponse(call: Call<PostResponse>, response: Response<PostResponse>) {
+                isLoading.value = false
+                if (response.isSuccessful) {
+                    Log.d("ProfileViewModel", "Post deleted successfully: id=$postId")
+                    successMessage.value = response.body()?.message ?: "Post deleted successfully"
+                    onSuccess(response.body()?.message ?: "Post deleted successfully")
+                    loadPosts() // Refresh posts after deletion
+                } else {
+                    val errorBody = response.errorBody()?.string() ?: "No details"
+                    val errorMsg = when (response.code()) {
+                        401 -> "Authentication failed. Please log in again."
+                        403 -> "You are not authorized to delete this post."
+                        404 -> "Post not found."
+                        429 -> "Too many requests. Try again later."
+                        else -> "Failed to delete post: ${response.code()} - ${errorBody}"
+                    }
+                    onFailure(errorMsg)
+                    Log.e("ProfileViewModel", "Delete post failed: $errorBody")
+                }
+            }
+
+            override fun onFailure(call: Call<PostResponse>, t: Throwable) {
+                isLoading.value = false
+                onFailure("Network error: ${t.message}")
+                Log.e("ProfileViewModel", "Delete post network error", t)
+            }
+        })
+    }
+
     fun updateProfilePhoto(file: File) {
         if (!file.exists() || file.length().toInt() == 0) {
             errorMessage.value = "Invalid file: File is empty or does not exist"
@@ -235,7 +280,7 @@ class ProfileViewModel(private val context: Context) : ViewModel() {
                     Log.d("ProfileViewModel", "Post added successfully: post_id=$postId")
                     successMessage.value = response.body()?.message ?: "Post added successfully"
                     onSuccess(postId)
-                    loadPosts() // Refresh posts after adding new one
+                    loadPosts()
                 } else {
                     val errorBody = response.errorBody()?.string() ?: "No details"
                     val errorMsg = when (response.code()) {
@@ -291,7 +336,7 @@ class ProfileViewModel(private val context: Context) : ViewModel() {
                     Log.d("ProfileViewModel", "Cover changed successfully for post_id=$postId")
                     successMessage.value = response.body()?.message ?: "Cover changed successfully"
                     onSuccess(response.body()?.message ?: "Cover changed successfully")
-                    loadPosts() // Refresh posts after changing cover
+                    loadPosts()
                 } else {
                     val errorBody = response.errorBody()?.string() ?: "No details"
                     val errorMsg = when (response.code()) {
@@ -345,7 +390,7 @@ class ProfileViewModel(private val context: Context) : ViewModel() {
                     Log.d("ProfileViewModel", "Post description updated successfully for post_id=$postId")
                     successMessage.value = response.body()?.message ?: "Post updated successfully"
                     onSuccess(response.body()?.message ?: "Post updated successfully")
-                    loadPosts() // Refresh posts after updating description
+                    loadPosts()
                 } else {
                     val errorBody = response.errorBody()?.string() ?: "No details"
                     val errorMsg = when (response.code()) {

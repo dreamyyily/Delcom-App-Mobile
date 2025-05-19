@@ -7,6 +7,7 @@ import del.ifs22017.delcomapp.data.SinglePostResponse
 import okhttp3.MultipartBody
 import okhttp3.RequestBody
 import retrofit2.Call
+import retrofit2.http.DELETE
 import retrofit2.http.Field
 import retrofit2.http.FormUrlEncoded
 import retrofit2.http.GET
@@ -49,4 +50,9 @@ interface PostApi {
     fun getPostById(
         @Path("id") postId: Int
     ): Call<SinglePostResponse>
+
+    @DELETE("posts/{id}")
+    fun deletePost(
+        @Path("id") postId: Int
+    ): Call<PostResponse>
 }
