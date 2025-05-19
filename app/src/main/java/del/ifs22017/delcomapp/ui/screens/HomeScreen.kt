@@ -37,6 +37,10 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavController
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
 import coil.compose.rememberAsyncImagePainter
 import del.ifs22017.delcomapp.data.ProfileViewModel
 import del.ifs22017.delcomapp.data.ProfileViewModelFactory
@@ -48,65 +52,8 @@ fun HomeScreen(
     navController: NavController,
     viewModel: ProfileViewModel = viewModel(factory = ProfileViewModelFactory(LocalContext.current))
 ) {
-    val user by viewModel.user
-    val isLoading by viewModel.isLoading
-    val errorMessage by viewModel.errorMessage
-    val successMessage by viewModel.successMessage
-    val isEditMode by viewModel.isEditMode
-    val context = LocalContext.current
-
-    val imagePicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
-    ) { uri: Uri? ->
-        Log.d("HomeScreen", "Image picker result: uri=$uri")
-        uri?.let {
-            try {
-                val file = FileUtil.fromUri(context, it)
-                Log.d("HomeScreen", "File created: ${file.absolutePath}, size: ${file.length()}")
-                if (file.exists() && file.length() > 0) {
-                    viewModel.updateProfilePhoto(file)
-                } else {
-                    Toast.makeText(context, "Invalid image file", Toast.LENGTH_SHORT).show()
-                    Log.e("HomeScreen", "Invalid file: ${file.absolutePath}")
-                }
-            } catch (e: Exception) {
-                Toast.makeText(context, "Failed to process image: ${e.message}", Toast.LENGTH_LONG).show()
-                Log.e("HomeScreen", "Error processing image", e)
-            }
-        } ?: run {
-            Toast.makeText(context, "No image selected", Toast.LENGTH_SHORT).show()
-            Log.w("HomeScreen", "No image selected")
-        }
-    }
-
-    val permissionLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.RequestPermission()
-    ) { isGranted ->
-        Log.d("HomeScreen", "Permission result: granted=$isGranted")
-        if (isGranted) {
-            imagePicker.launch("image/*")
-        } else {
-            Toast.makeText(context, "Permission denied. Cannot access gallery.", Toast.LENGTH_LONG).show()
-            Log.w("HomeScreen", "Gallery permission denied")
-        }
-    }
-
-    LaunchedEffect(errorMessage) {
-        errorMessage?.let {
-            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
-            Log.d("HomeScreen", "Error message displayed: $it")
-            viewModel.errorMessage.value = null
-        }
-    }
-
-    LaunchedEffect(successMessage) {
-        successMessage?.let {
-            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
-            Log.d("HomeScreen", "Success message displayed: $it")
-            viewModel.successMessage.value = null
-        }
-    }
-
+    val homeNavController = rememberNavController()
+    val currentRoute = homeNavController.currentBackStackEntryAsState().value?.destination?.route
 
     val gradientColors = listOf(
         Color(0xFF005A9C),
@@ -119,14 +66,14 @@ fun HomeScreen(
             TopAppBar(
                 title = {
                     Text(
-                        if (isEditMode) "Edit Profile" else "Profile",
+                        if (viewModel.isEditMode.value) "Edit Profile" else if (currentRoute == "posts") "Postingan" else "Beranda",
                         style = MaterialTheme.typography.titleLarge,
                         color = MaterialTheme.colorScheme.onPrimary
                     )
                 },
                 navigationIcon = {
                     IconButton(onClick = {
-                        if (isEditMode) viewModel.cancelEdit()
+                        if (viewModel.isEditMode.value) viewModel.cancelEdit()
                         else navController.navigateUp()
                     }) {
                         Icon(
@@ -137,7 +84,7 @@ fun HomeScreen(
                     }
                 },
                 actions = {
-                    if (!isEditMode && user != null) {
+                    if (!viewModel.isEditMode.value && currentRoute == "profile" && viewModel.user.value != null) {
                         IconButton(onClick = { viewModel.enterEditMode() }) {
                             Icon(
                                 Icons.Default.Edit,
@@ -151,6 +98,31 @@ fun HomeScreen(
                     containerColor = Color(0xFF005A9C)
                 )
             )
+        },
+        bottomBar = {
+            NavigationBar(
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.onSurface
+            ) {
+                NavigationBarItem(
+                    icon = { Icon(Icons.Default.Home, contentDescription = "Beranda") },
+                    label = { Text("Beranda") },
+                    selected = currentRoute == "profile",
+                    onClick = { homeNavController.navigate("profile") {
+                        popUpTo(homeNavController.graph.startDestinationId)
+                        launchSingleTop = true
+                    } }
+                )
+                NavigationBarItem(
+                    icon = { Icon(Icons.Default.List, contentDescription = "Postingan") },
+                    label = { Text("Postingan") },
+                    selected = currentRoute == "posts",
+                    onClick = { homeNavController.navigate("posts") {
+                        popUpTo(homeNavController.graph.startDestinationId)
+                        launchSingleTop = true
+                    } }
+                )
+            }
         },
         modifier = Modifier.background(
             brush = Brush.verticalGradient(
@@ -166,42 +138,122 @@ fun HomeScreen(
                 .padding(innerPadding)
                 .padding(horizontal = 16.dp)
         ) {
-            when {
-                isLoading -> {
-                    CircularProgressIndicator(
-                        modifier = Modifier.align(Alignment.Center),
-                        color = MaterialTheme.colorScheme.primary
+            NavHost(
+                navController = homeNavController,
+                startDestination = "profile",
+                modifier = Modifier.fillMaxSize()
+            ) {
+                composable("profile") {
+                    ProfileScreen(viewModel)
+                }
+                composable("posts") {
+                    PostsScreen()
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProfileScreen(viewModel: ProfileViewModel) {
+    val user by viewModel.user
+    val isLoading by viewModel.isLoading
+    val errorMessage by viewModel.errorMessage
+    val successMessage by viewModel.successMessage
+    val isEditMode by viewModel.isEditMode
+    val context = LocalContext.current
+
+    val imagePicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri: Uri? ->
+        Log.d("ProfileScreen", "Image picker result: uri=$uri")
+        uri?.let {
+            try {
+                val file = FileUtil.fromUri(context, it)
+                Log.d("ProfileScreen", "File created: ${file.absolutePath}, size: ${file.length()}")
+                if (file.exists() && file.length() > 0) {
+                    viewModel.updateProfilePhoto(file)
+                } else {
+                    Toast.makeText(context, "Invalid image file", Toast.LENGTH_SHORT).show()
+                    Log.e("ProfileScreen", "Invalid file: ${file.absolutePath}")
+                }
+            } catch (e: Exception) {
+                Toast.makeText(context, "Failed to process image: ${e.message}", Toast.LENGTH_LONG).show()
+                Log.e("ProfileScreen", "Error processing image", e)
+            }
+        } ?: run {
+            Toast.makeText(context, "No image selected", Toast.LENGTH_SHORT).show()
+            Log.w("ProfileScreen", "No image selected")
+        }
+    }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { isGranted ->
+        Log.d("ProfileScreen", "Permission result: granted=$isGranted")
+        if (isGranted) {
+            imagePicker.launch("image/*")
+        } else {
+            Toast.makeText(context, "Permission denied. Cannot access gallery.", Toast.LENGTH_LONG).show()
+            Log.w("ProfileScreen", "Gallery permission denied")
+        }
+    }
+
+    LaunchedEffect(errorMessage) {
+        errorMessage?.let {
+            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+            Log.d("ProfileScreen", "Error message displayed: $it")
+            viewModel.errorMessage.value = null
+        }
+    }
+
+    LaunchedEffect(successMessage) {
+        successMessage?.let {
+            Toast.makeText(context, it, Toast.LENGTH_LONG).show()
+            Log.d("ProfileScreen", "Success message displayed: $it")
+            viewModel.successMessage.value = null
+        }
+    }
+
+    Box(
+        modifier = Modifier.fillMaxSize(),
+        contentAlignment = Alignment.Center
+    ) {
+        when {
+            isLoading -> {
+                CircularProgressIndicator(
+                    modifier = Modifier,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+            errorMessage != null -> {
+                Column(
+                    modifier = Modifier,
+                    horizontalAlignment = Alignment.CenterHorizontally
+                ) {
+                    Text(
+                        text = "Error: $errorMessage",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyLarge
                     )
-                }
-                errorMessage != null -> {
-                    Column(
-                        modifier = Modifier.align(Alignment.Center),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                    Spacer(modifier = Modifier.height(16.dp))
+                    Button(
+                        onClick = { viewModel.loadProfile() },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.primary,
+                            contentColor = MaterialTheme.colorScheme.onPrimary
+                        ),
+                        shape = RoundedCornerShape(12.dp)
                     ) {
-                        Text(
-                            text = "Error: $errorMessage",
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodyLarge
-                        )
-                        Spacer(modifier = Modifier.height(16.dp))
-                        Button(
-                            onClick = { viewModel.loadProfile() },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = MaterialTheme.colorScheme.primary,
-                                contentColor = MaterialTheme.colorScheme.onPrimary
-                            ),
-                            shape = RoundedCornerShape(12.dp)
-                        ) {
-                            Text("Retry", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                        }
+                        Text("Retry", fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     }
                 }
-                user != null -> {
-                    if (isEditMode) {
-                        EditProfileContent(viewModel, imagePicker, permissionLauncher)
-                    } else {
-                        ViewProfileContent(viewModel, imagePicker, permissionLauncher)
-                    }
+            }
+            user != null -> {
+                if (isEditMode) {
+                    EditProfileContent(viewModel, imagePicker, permissionLauncher)
+                } else {
+                    ViewProfileContent(viewModel, imagePicker, permissionLauncher)
                 }
             }
         }
@@ -239,7 +291,6 @@ private fun EditProfileContent(
             .padding(top = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Foto Profil dengan Border Gradient
         Card(
             modifier = Modifier
                 .size(140.dp)
@@ -295,7 +346,6 @@ private fun EditProfileContent(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // Form Input dengan Ikon
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -431,7 +481,6 @@ private fun EditProfileContent(
 
         Spacer(modifier = Modifier.height(24.dp))
 
-        // Tombol dengan Gradient
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly,
@@ -523,7 +572,6 @@ private fun ViewProfileContent(
             .padding(top = 16.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // Foto Profil dengan Border Gradient
         Card(
             modifier = Modifier
                 .size(140.dp)
@@ -580,7 +628,6 @@ private fun ViewProfileContent(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Card Detail
         Card(
             modifier = Modifier
                 .fillMaxWidth()

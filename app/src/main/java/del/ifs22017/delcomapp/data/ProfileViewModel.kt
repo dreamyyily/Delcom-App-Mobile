@@ -13,6 +13,7 @@ import del.ifs22017.delcomapp.network.ApiClient
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MultipartBody
 import okhttp3.RequestBody.Companion.asRequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
 import retrofit2.Call
 import retrofit2.Callback
 import retrofit2.Response
@@ -20,6 +21,7 @@ import java.io.File
 
 class ProfileViewModel(private val context: Context) : ViewModel() {
     val user = mutableStateOf<ProfileUser?>(null)
+    val posts = mutableStateOf<List<Post>>(emptyList())
     val isLoading = mutableStateOf(false)
     val errorMessage = mutableStateOf<String?>(null)
     val successMessage = mutableStateOf<String?>(null)
@@ -33,6 +35,7 @@ class ProfileViewModel(private val context: Context) : ViewModel() {
 
     init {
         loadProfile()
+        loadPosts()
     }
 
     fun loadProfile() {
@@ -56,6 +59,84 @@ class ProfileViewModel(private val context: Context) : ViewModel() {
                 isLoading.value = false
                 errorMessage.value = "Network error: ${t.message}"
                 Log.e("ProfileViewModel", "Load profile network error", t)
+            }
+        })
+    }
+
+    fun loadPosts() {
+        if (ApiClient.authToken.isNullOrEmpty()) {
+            errorMessage.value = "Authentication required. Please log in again."
+            Log.e("ProfileViewModel", "No auth token available")
+            return
+        }
+
+        if (!isNetworkAvailable()) {
+            errorMessage.value = "No internet connection. Please check your network."
+            Log.e("ProfileViewModel", "No internet connection")
+            return
+        }
+
+        isLoading.value = true
+        Log.d("ProfileViewModel", "Loading posts")
+        ApiClient.postApi.getAllPosts(isMe = 1).enqueue(object : Callback<PostsResponse> {
+            override fun onResponse(call: Call<PostsResponse>, response: Response<PostsResponse>) {
+                isLoading.value = false
+                if (response.isSuccessful) {
+                    val postsResponse = response.body()?.data?.posts ?: emptyList()
+                    posts.value = postsResponse
+                    Log.d("ProfileViewModel", "Posts loaded: count=${postsResponse.size}")
+                } else {
+                    errorMessage.value = "Failed to load posts: ${response.code()} - ${response.message()}"
+                    Log.e("ProfileViewModel", "Load posts failed: ${response.errorBody()?.string()}")
+                }
+            }
+
+            override fun onFailure(call: Call<PostsResponse>, t: Throwable) {
+                isLoading.value = false
+                errorMessage.value = "Network error: ${t.message}"
+                Log.e("ProfileViewModel", "Load posts network error", t)
+            }
+        })
+    }
+
+    fun getPostById(postId: Int, onSuccess: (DetailedPost) -> Unit, onFailure: (String) -> Unit) {
+        if (ApiClient.authToken.isNullOrEmpty()) {
+            onFailure("Authentication required. Please log in again.")
+            Log.e("ProfileViewModel", "No auth token available")
+            return
+        }
+
+        if (!isNetworkAvailable()) {
+            onFailure("No internet connection. Please check your network.")
+            Log.e("ProfileViewModel", "No internet connection")
+            return
+        }
+
+        isLoading.value = true
+        Log.d("ProfileViewModel", "Loading post: id=$postId")
+        ApiClient.postApi.getPostById(postId).enqueue(object : Callback<SinglePostResponse> {
+            override fun onResponse(call: Call<SinglePostResponse>, response: Response<SinglePostResponse>) {
+                isLoading.value = false
+                if (response.isSuccessful) {
+                    val post = response.body()?.data?.post
+                    if (post != null) {
+                        Log.d("ProfileViewModel", "Post loaded: id=$postId")
+                        onSuccess(post)
+                    } else {
+                        onFailure("Post data is null")
+                        Log.e("ProfileViewModel", "Post data is null for id=$postId")
+                    }
+                } else {
+                    val errorMsg = "Failed to load post: ${response.code()} - ${response.message()}"
+                    onFailure(errorMsg)
+                    Log.e("ProfileViewModel", "Load post failed: ${response.errorBody()?.string()}")
+                }
+            }
+
+            override fun onFailure(call: Call<SinglePostResponse>, t: Throwable) {
+                isLoading.value = false
+                onFailure("Network error: ${t.message}")
+                Log.e("ProfileViewModel", "Load post network error", t)
             }
         })
     }
@@ -110,6 +191,180 @@ class ProfileViewModel(private val context: Context) : ViewModel() {
                 isLoading.value = false
                 errorMessage.value = "Network error: ${t.message}"
                 Log.e("ProfileViewModel", "Upload photo network error", t)
+            }
+        })
+    }
+
+    fun addPost(cover: File, description: String, onSuccess: (Int) -> Unit, onFailure: (String) -> Unit) {
+        if (!cover.exists() || cover.length().toInt() == 0) {
+            onFailure("Invalid cover image: File is empty or does not exist")
+            Log.e("ProfileViewModel", "Invalid cover file: ${cover.absolutePath}")
+            return
+        }
+
+        if (description.isBlank()) {
+            onFailure("Description cannot be empty")
+            Log.w("ProfileViewModel", "Add post failed: Description is empty")
+            return
+        }
+
+        if (ApiClient.authToken.isNullOrEmpty()) {
+            onFailure("Authentication required. Please log in again.")
+            Log.e("ProfileViewModel", "No auth token available")
+            return
+        }
+
+        if (!isNetworkAvailable()) {
+            onFailure("No internet connection. Please check your network.")
+            Log.e("ProfileViewModel", "No internet connection")
+            return
+        }
+
+        isLoading.value = true
+        Log.d("ProfileViewModel", "Uploading post: cover=${cover.absolutePath}, description=$description")
+
+        val coverRequest = cover.asRequestBody("image/*".toMediaType())
+        val coverPart = MultipartBody.Part.createFormData("cover", cover.name, coverRequest)
+        val descriptionRequest = description.toRequestBody("text/plain".toMediaType())
+
+        ApiClient.postApi.addPost(coverPart, descriptionRequest).enqueue(object : Callback<PostResponse> {
+            override fun onResponse(call: Call<PostResponse>, response: Response<PostResponse>) {
+                isLoading.value = false
+                if (response.isSuccessful) {
+                    val postId = response.body()?.data?.post_id ?: -1
+                    Log.d("ProfileViewModel", "Post added successfully: post_id=$postId")
+                    successMessage.value = response.body()?.message ?: "Post added successfully"
+                    onSuccess(postId)
+                    loadPosts() // Refresh posts after adding new one
+                } else {
+                    val errorBody = response.errorBody()?.string() ?: "No details"
+                    val errorMsg = when (response.code()) {
+                        400 -> "Invalid data. Please check your image or description."
+                        401 -> "Authentication failed. Please log in again."
+                        403 -> "You are not authorized to create posts."
+                        413 -> "Image too large. Please choose a smaller file."
+                        429 -> "Too many requests. Try again later."
+                        else -> "Failed to add post: ${response.code()} - ${errorBody}"
+                    }
+                    onFailure(errorMsg)
+                    Log.e("ProfileViewModel", "Add post failed: $errorBody")
+                }
+            }
+
+            override fun onFailure(call: Call<PostResponse>, t: Throwable) {
+                isLoading.value = false
+                onFailure("Network error: ${t.message}")
+                Log.e("ProfileViewModel", "Add post network error", t)
+            }
+        })
+    }
+
+    fun changePostCover(postId: Int, cover: File, onSuccess: (String) -> Unit, onFailure: (String) -> Unit) {
+        if (!cover.exists() || cover.length().toInt() == 0) {
+            onFailure("Invalid cover image: File is empty or does not exist")
+            Log.e("ProfileViewModel", "Invalid cover file: ${cover.absolutePath}")
+            return
+        }
+
+        if (ApiClient.authToken.isNullOrEmpty()) {
+            onFailure("Authentication required. Please log in again.")
+            Log.e("ProfileViewModel", "No auth token available")
+            return
+        }
+
+        if (!isNetworkAvailable()) {
+            onFailure("No internet connection. Please check your network.")
+            Log.e("ProfileViewModel", "No internet connection")
+            return
+        }
+
+        isLoading.value = true
+        Log.d("ProfileViewModel", "Changing cover for post_id=$postId, cover=${cover.absolutePath}")
+
+        val coverRequest = cover.asRequestBody("image/*".toMediaType())
+        val coverPart = MultipartBody.Part.createFormData("cover", cover.name, coverRequest)
+
+        ApiClient.postApi.changeCover(postId, coverPart).enqueue(object : Callback<PostResponse> {
+            override fun onResponse(call: Call<PostResponse>, response: Response<PostResponse>) {
+                isLoading.value = false
+                if (response.isSuccessful) {
+                    Log.d("ProfileViewModel", "Cover changed successfully for post_id=$postId")
+                    successMessage.value = response.body()?.message ?: "Cover changed successfully"
+                    onSuccess(response.body()?.message ?: "Cover changed successfully")
+                    loadPosts() // Refresh posts after changing cover
+                } else {
+                    val errorBody = response.errorBody()?.string() ?: "No details"
+                    val errorMsg = when (response.code()) {
+                        400 -> "Invalid image format or data. Please try another image."
+                        401 -> "Authentication failed. Please log in again."
+                        403 -> "You are not authorized to change this cover."
+                        404 -> "Post not found."
+                        413 -> "Image too large. Please choose a smaller file."
+                        429 -> "Too many requests. Try again later."
+                        else -> "Failed to change cover: ${response.code()} - ${errorBody}"
+                    }
+                    onFailure(errorMsg)
+                    Log.e("ProfileViewModel", "Change cover failed: $errorBody")
+                }
+            }
+
+            override fun onFailure(call: Call<PostResponse>, t: Throwable) {
+                isLoading.value = false
+                onFailure("Network error: ${t.message}")
+                Log.e("ProfileViewModel", "Change cover network error", t)
+            }
+        })
+    }
+
+    fun updatePostDescription(postId: Int, description: String, onSuccess: (String) -> Unit, onFailure: (String) -> Unit) {
+        if (description.isBlank()) {
+            onFailure("Description cannot be empty")
+            Log.w("ProfileViewModel", "Update post failed: Description is empty")
+            return
+        }
+
+        if (ApiClient.authToken.isNullOrEmpty()) {
+            onFailure("Authentication required. Please log in again.")
+            Log.e("ProfileViewModel", "No auth token available")
+            return
+        }
+
+        if (!isNetworkAvailable()) {
+            onFailure("No internet connection. Please check your network.")
+            Log.e("ProfileViewModel", "No internet connection")
+            return
+        }
+
+        isLoading.value = true
+        Log.d("ProfileViewModel", "Updating post description for post_id=$postId, description=$description")
+
+        ApiClient.postApi.updatePost(postId, description).enqueue(object : Callback<PostResponse> {
+            override fun onResponse(call: Call<PostResponse>, response: Response<PostResponse>) {
+                isLoading.value = false
+                if (response.isSuccessful) {
+                    Log.d("ProfileViewModel", "Post description updated successfully for post_id=$postId")
+                    successMessage.value = response.body()?.message ?: "Post updated successfully"
+                    onSuccess(response.body()?.message ?: "Post updated successfully")
+                    loadPosts() // Refresh posts after updating description
+                } else {
+                    val errorBody = response.errorBody()?.string() ?: "No details"
+                    val errorMsg = when (response.code()) {
+                        400 -> "Invalid description. Please check your input."
+                        401 -> "Authentication failed. Please log in again."
+                        403 -> "You are not authorized to update this post."
+                        404 -> "Post not found."
+                        429 -> "Too many requests. Try again later."
+                        else -> "Failed to update post: ${response.code()} - ${errorBody}"
+                    }
+                    onFailure(errorMsg)
+                    Log.e("ProfileViewModel", "Update post failed: $errorBody")
+                }
+            }
+
+            override fun onFailure(call: Call<PostResponse>, t: Throwable) {
+                isLoading.value = false
+                onFailure("Network error: ${t.message}")
+                Log.e("ProfileViewModel", "Update post network error", t)
             }
         })
     }
@@ -170,9 +425,7 @@ class ProfileViewModel(private val context: Context) : ViewModel() {
             return
         }
 
-        // Cek apakah email berubah
         if (user.value?.email == tempEmail.value && user.value?.name == tempName.value) {
-            // Jika email dan nama tidak berubah, hanya simpan nomor telepon
             val normalizedPhone = if (tempPhone.value.isNotEmpty()) {
                 tempPhone.value.replace(Regex("[^0-9+]"), "")
             } else {
@@ -195,14 +448,12 @@ class ProfileViewModel(private val context: Context) : ViewModel() {
             return
         }
 
-        // Normalisasi nomor telepon
         val normalizedPhone = if (tempPhone.value.isNotEmpty()) {
             tempPhone.value.replace(Regex("[^0-9+]"), "")
         } else {
             null
         }
 
-        // Simpan nomor telepon ke SharedPreferences
         with(sharedPreferences.edit()) {
             if (normalizedPhone != null) {
                 putString("phone", normalizedPhone)
